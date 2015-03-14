@@ -411,6 +411,7 @@ class Connection(object):
             'db': self.db,
         }
         self._connect_callbacks = []
+        self._buffer_cutoff = 6000
 
     def __repr__(self):
         return self.description_format % self._description_args
@@ -613,7 +614,8 @@ class Connection(object):
         for arg in imap(self.encode, args):
             # to avoid large string mallocs, chunk the command into the
             # output list if we're sending large values
-            if len(buff) > 6000 or len(arg) > 6000:
+            if len(buff) > self._buffer_cutoff or \
+               len(arg) > self._buffer_cutoff:
                 buff = SYM_EMPTY.join(
                     (buff, SYM_DOLLAR, b(str(len(arg))), SYM_CRLF))
                 output.append(buff)
@@ -633,13 +635,18 @@ class Connection(object):
 
         for cmd in commands:
             for chunk in self.pack_command(*cmd):
-                pieces.append(chunk)
-                buffer_length += len(chunk)
+                chunklen = len(chunk)
+                if buffer_length > self._buffer_cutoff or \
+                   chunklen > self._buffer_cutoff:
+                    output.append(SYM_EMPTY.join(pieces))
+                    buffer_length = 0
+                    pieces = []
 
-            if buffer_length > 6000:
-                output.append(SYM_EMPTY.join(pieces))
-                buffer_length = 0
-                pieces = []
+                if chunklen > self._buffer_cutoff:
+                    output.append(chunk)
+                else:
+                    pieces.append(chunk)
+                    buffer_length += chunklen
 
         if pieces:
             output.append(SYM_EMPTY.join(pieces))
